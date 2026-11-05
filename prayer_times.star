@@ -3,6 +3,11 @@ Applet: Prayer Times
 Summary: Islamic Prayer Time Display
 Description: Displays the prayer times for today's date and also shows the remaining time till the next prayer based on the user's location.
 Author: EslamMoh
+
+Modified by tmuhamma in 2026 from the Prayer Times app in https://github.com/tidbyt/community,
+which is licensed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+Changes: added cycle rate, 12 hour clock, Hanafi Asr, time offset and color settings, fixed
+crashes at the end of the day and at the exact start of a prayer, and moved requests to HTTPS.
 """
 
 load("animation.star", "animation")
@@ -14,7 +19,7 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 # Adhan prayer API URL
-PRAYER_TIME_BASE_URL = "http://api.aladhan.com/v1/timings/"
+PRAYER_TIME_BASE_URL = "https://api.aladhan.com/v1/timings/"
 
 # Load Moon icon from base64 encoded data
 MOON_ICON = base64.decode("""
@@ -74,6 +79,39 @@ PRAYER_ICON = {
 # Cache prayer times request for one day.
 TTL_CACHE = 86400
 
+# Default time each screen is shown, in milliseconds.
+DEFAULT_CYCLE_RATE = "4000"
+
+# Default Asr calculation (0 = Shafi'i, Maliki and Hanbali, 1 = Hanafi).
+DEFAULT_SCHOOL = "0"
+
+# Largest adjustment, in minutes, that can be applied to a prayer time.
+MAX_OFFSET_MINUTES = 30
+
+# Prayers in the order they occur during the day.
+PRAYER_ORDER = ["fajr", "sunrise", "duhr", "asr", "maghrib", "isha"]
+
+# Name of each prayer in the API response and in the settings.
+PRAYER_NAMES = {
+    "fajr": "Fajr",
+    "sunrise": "Sunrise",
+    "duhr": "Dhuhr",
+    "asr": "Asr",
+    "maghrib": "Maghrib",
+    "isha": "Isha",
+}
+
+# Default colors for each part of the display.
+DEFAULT_COLORS = {
+    "next_prayer_color": "#228B22",
+    "countdown_color": "#FFFFFF",
+    "separator_color": "#FF0000",
+    "label_color": "#FFFFFF",
+    "time_color": "#FFFFFF",
+    "highlight_color": "#F4C430",
+    "highlight_text_color": "#000000",
+}
+
 # Fetch location configs
 def get_location(config):
     location = config.get("location", DEFAULT_LOCATION)
@@ -83,223 +121,132 @@ def get_location(config):
 def get_method(config):
     return config.get("method", DEFAULT_METHOD)
 
+# Fetch how long each screen is shown, in milliseconds.
+def get_cycle_rate(config):
+    return int(config.get("cycle_rate", DEFAULT_CYCLE_RATE))
+
+# Build the API "tune" value, which adjusts each timing by a number of minutes.
+# Its order is Imsak, Fajr, Sunrise, Dhuhr, Asr, Maghrib, Sunset, Isha, Midnight.
+def get_tune(config):
+    offset = int(config.get("offset", "0"))
+    return "0,%d,%d,%d,%d,%d,0,%d,0" % (offset, offset, offset, offset, offset, offset)
+
+# Fetch the color for each part of the display.
+def get_colors(config):
+    return {name: config.get(name) or color for name, color in DEFAULT_COLORS.items()}
+
 def main(config):
     location = get_location(config)
-    method = get_method(config)
+    params = {
+        "method": get_method(config),
+        "school": config.get("school", DEFAULT_SCHOOL),
+        "tune": get_tune(config),
+    }
     now = time.now().in_location(location["timezone"])
     date = now.format("2-01-2006")
 
     # Fetch today prayer times
-    prayers = get_prayers(date, location, method)
+    prayers = get_prayers(date, location, params)
 
     # Calculate the next prayer based on the current time
-    next_prayer = next_prayer_time(prayers, now, location, method)
+    next_prayer = next_prayer_time(prayers, now, location, params)
 
     # Get the current prayer name
     current_prayer = current_prayer_name(next_prayer["prayer"])
 
+    colors = get_colors(config)
+    meta_data = render_meta_data(PRAYER_ICON[current_prayer], next_prayer, colors)
+    display = {
+        "prayers": prayers,
+        "current_prayer": current_prayer,
+        "colors": colors,
+        "use_12_hour": config.bool("use_12_hour", True),
+    }
+
     return render.Root(
-        delay = 2000,
+        delay = get_cycle_rate(config),
         max_age = 60,
+        # Slower cycle rates run past the default 15 second limit and would lose the last screens.
+        show_full_animation = True,
         child = render.Column(
             children = [
                 render.Sequence(children = [
-                    animation.Transformation(
-                        child = render.Row(children = [
-                            render.Stack(
-                                children = [
-                                    render.Padding(
-                                        pad = (7, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 17,
-                                            height = 7,
-                                            color = current_prayer_color("fajr", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "FAJR",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 15,
-                                                color = current_prayer_color("fajr", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (5, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Fajr"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (30, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 29,
-                                            height = 7,
-                                            color = current_prayer_color("sunrise", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "sunrise",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 27,
-                                                color = current_prayer_color("sunrise", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (34, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Sunrise"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                ] + render_meta_data(PRAYER_ICON[current_prayer], next_prayer),
-                            ),
-                        ]),
-                        duration = 1,
-                        keyframes = keyframes(0),
+                    render_screen(
+                        0,
+                        render_prayer("fajr", "FAJR", 7, 17, 15, 5, display) +
+                        render_prayer("sunrise", "sunrise", 30, 29, 27, 34, display) +
+                        meta_data,
                     ),
-                    animation.Transformation(
-                        child = render.Row(children = [
-                            render.Stack(
-                                children = [
-                                    render.Padding(
-                                        pad = (7, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 17,
-                                            height = 7,
-                                            color = current_prayer_color("duhr", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "Duhr",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 15,
-                                                color = current_prayer_color("duhr", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (5, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Dhuhr"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (38, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 13,
-                                            height = 7,
-                                            color = current_prayer_color("asr", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "Asr",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 11,
-                                                color = current_prayer_color("asr", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (34, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Asr"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                ] + render_meta_data(PRAYER_ICON[current_prayer], next_prayer),
-                            ),
-                        ]),
-                        duration = 1,
-                        keyframes = keyframes(64),
+                    render_screen(
+                        64,
+                        render_prayer("duhr", "Duhr", 7, 17, 15, 5, display) +
+                        render_prayer("asr", "Asr", 38, 13, 11, 34, display) +
+                        meta_data,
                     ),
-                    animation.Transformation(
-                        child = render.Row(children = [
-                            render.Stack(
-                                children = [
-                                    render.Padding(
-                                        pad = (5, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 29,
-                                            height = 7,
-                                            color = current_prayer_color("maghrib", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "MAGHRIB",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 26,
-                                                color = current_prayer_color("maghrib", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (8, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Maghrib"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (42, 17, 0, 0),
-                                        child = render.Box(
-                                            width = 16,
-                                            height = 7,
-                                            color = current_prayer_color("isha", current_prayer)["box_color"],
-                                            child = render.WrappedText(
-                                                content = "ISHA",
-                                                font = "CG-pixel-3x5-mono",
-                                                align = "left",
-                                                width = 16,
-                                                color = current_prayer_color("isha", current_prayer)["font_color"],
-                                            ),
-                                        ),
-                                    ),
-                                    render.Padding(
-                                        pad = (40, 24, 0, 0),
-                                        child = render.Box(
-                                            width = 22,
-                                            height = 8,
-                                            child = render.WrappedText(
-                                                content = prayers["Isha"],
-                                                align = "left",
-                                                width = 22,
-                                            ),
-                                        ),
-                                    ),
-                                ] + render_meta_data(PRAYER_ICON[current_prayer], next_prayer),
-                            ),
-                        ]),
-                        duration = 1,
-                        keyframes = keyframes(64),
+                    render_screen(
+                        64,
+                        render_prayer("maghrib", "MAGHRIB", 5, 29, 26, 8, display) +
+                        render_prayer("isha", "ISHA", 42, 16, 16, 40, display) +
+                        meta_data,
                     ),
                 ]),
             ],
         ),
     )
+
+# Render one screen of prayer times.
+def render_screen(x, children):
+    return animation.Transformation(
+        child = render.Row(children = [
+            render.Stack(children = children),
+        ]),
+        duration = 1,
+        keyframes = keyframes(x),
+    )
+
+# Render the name and time of one prayer.
+def render_prayer(prayer, label, label_x, label_box_width, label_text_width, time_x, display):
+    colors = current_prayer_color(prayer, display["current_prayer"], display["colors"])
+
+    return [
+        render.Padding(
+            pad = (label_x, 17, 0, 0),
+            child = render.Box(
+                width = label_box_width,
+                height = 7,
+                color = colors["box_color"],
+                child = render.WrappedText(
+                    content = label,
+                    font = "CG-pixel-3x5-mono",
+                    align = "left",
+                    width = label_text_width,
+                    color = colors["font_color"],
+                ),
+            ),
+        ),
+        render.Padding(
+            pad = (time_x, 24, 0, 0),
+            child = render.Box(
+                width = 22,
+                height = 8,
+                child = render.WrappedText(
+                    content = display_time(display["prayers"][PRAYER_NAMES[prayer]], display["use_12_hour"]),
+                    # Times without a leading zero are narrower, so keep them under their label.
+                    align = "center" if display["use_12_hour"] else "left",
+                    width = 22,
+                    color = display["colors"]["time_color"],
+                ),
+            ),
+        ),
+    ]
+
+# Format an API "HH:MM" time for display, in either 12 or 24 hour format.
+def display_time(prayer, use_12_hour):
+    if not use_12_hour:
+        return prayer
+
+    p = prayer.partition(":")
+    return "%d:%s" % (int(p[0]) % 12 or 12, p[2])
 
 def render_time_icon(icon):
     return render.Padding(
@@ -309,17 +256,17 @@ def render_time_icon(icon):
         ),
     )
 
-def render_line_separator():
+def render_line_separator(colors):
     return render.Padding(
         pad = (0, 16, 0, 0),
         child = render.Box(
             width = 64,
             height = 1,
-            color = "#f00",
+            color = colors["separator_color"],
         ),
     )
 
-def render_next_prayer_time(next_prayer):
+def render_next_prayer_time(next_prayer, colors):
     return {
         "name": render.Padding(
             pad = (20, 1, 0, 0),
@@ -329,7 +276,7 @@ def render_next_prayer_time(next_prayer):
                 child = render.WrappedText(
                     content = next_prayer["prayer"],
                     font = "CG-pixel-3x5-mono",
-                    color = "#228B22",
+                    color = colors["next_prayer_color"],
                     align = "left",
                 ),
             ),
@@ -344,6 +291,7 @@ def render_next_prayer_time(next_prayer):
                     font = "CG-pixel-3x5-mono",
                     linespacing = 1,
                     align = "left",
+                    color = colors["countdown_color"],
                 ),
             ),
         ),
@@ -351,14 +299,7 @@ def render_next_prayer_time(next_prayer):
 
 # Format prayer times in DateTime format
 def formatted_prayer_times(prayers, now, timezone):
-    return {
-        "fajr": format_time(prayers["Fajr"], now, timezone),
-        "sunrise": format_time(prayers["Sunrise"], now, timezone),
-        "duhr": format_time(prayers["Dhuhr"], now, timezone),
-        "asr": format_time(prayers["Asr"], now, timezone),
-        "maghrib": format_time(prayers["Maghrib"], now, timezone),
-        "isha": format_time(prayers["Isha"], now, timezone),
-    }
+    return {prayer: format_time(prayers[PRAYER_NAMES[prayer]], now, timezone) for prayer in PRAYER_ORDER}
 
 # Format time from "HH:MM" to DateTime format
 def format_time(prayer, now, timezone):
@@ -366,51 +307,33 @@ def format_time(prayer, now, timezone):
 
     return time.time(year = now.year, month = now.month, day = now.day, hour = int(p[0]), minute = int(p[2]), second = 0o0, location = timezone)
 
-# Calculate next prayer time based on the current time
-def next_prayer_time(prayers, now, location, method):
+# Calculate next prayer time based on the current time.
+def next_prayer_time(prayers, now, location, params):
     pt = formatted_prayer_times(prayers, now, location["timezone"])
 
-    if (now > pt["fajr"]) and (now < pt["sunrise"]):
-        return {"prayer": "sunrise", "time": time_till_next_prayer(now, pt["sunrise"])}
+    for prayer in PRAYER_ORDER:
+        if now < pt[prayer]:
+            return {"prayer": prayer, "time": time_till_next_prayer(now, pt[prayer])}
 
-    elif (now > pt["sunrise"]) and (now < pt["duhr"]):
-        return {"prayer": "duhr", "time": time_till_next_prayer(now, pt["duhr"])}
+    # All of today's prayers have passed, so the next one is tomorrow's Fajr.
+    tomorrow_fajr = get_tomorrow_fajr(now, location, params)
 
-    elif (now > pt["duhr"]) and (now < pt["asr"]):
-        return {"prayer": "asr", "time": time_till_next_prayer(now, pt["asr"])}
-
-    elif (now > pt["asr"]) and (now < pt["maghrib"]):
-        return {"prayer": "maghrib", "time": time_till_next_prayer(now, pt["maghrib"])}
-
-    elif (now > pt["maghrib"]) and (now < pt["isha"]):
-        return {"prayer": "isha", "time": time_till_next_prayer(now, pt["isha"])}
-
-    elif (pt["isha"] < now) and (now <= (format_time("23:59", now, location["timezone"]))):  # Get the next prayer time in case the current time is between Isha time and midnight
-        # Get Fajr prayer time for tomorrow date
-        tomorrow_fajr = get_tomorrow_fajr(now, location, method)
-
-        return {"prayer": "fajr", "time": time_till_next_prayer(now, tomorrow_fajr)}
-
-    elif (now < pt["fajr"]):  # Get the next prayer time in case current time is between Midnight and Fajr time.
-        return {"prayer": "fajr", "time": time_till_next_prayer(now, pt["fajr"])}
-
-    else:
-        fail("Failed to calculate the remaining time till the next prayer")
+    return {"prayer": "fajr", "time": time_till_next_prayer(now, tomorrow_fajr)}
 
 # Get Fajr prayer time for tomorrow date.
-def get_tomorrow_fajr(now, location, method):
+def get_tomorrow_fajr(now, location, params):
     tomorrow = now + 24 * time.hour
     tomorrow_date = tomorrow.format("2-01-2006")
-    tomorrow_prayers = get_prayers(tomorrow_date, location, method)
+    tomorrow_prayers = get_prayers(tomorrow_date, location, params)
     return format_time(tomorrow_prayers["Fajr"], tomorrow, location["timezone"])
 
 # Send API request to get prayer times according to location and date.
-def get_prayers(date, location, method):
-    url = PRAYER_TIME_BASE_URL + date + "?latitude=%s" % (location["lat"]) + "&longitude=%s" % (location["lng"]) + "&method=%s" % (method)
+def get_prayers(date, location, params):
+    url = PRAYER_TIME_BASE_URL + date + "?latitude=%s" % (location["lat"]) + "&longitude=%s" % (location["lng"]) + "&method=%s" % (params["method"]) + "&school=%s" % (params["school"]) + "&tune=%s" % (params["tune"])
     rep = http.get(url, ttl_seconds = TTL_CACHE)
 
     if rep.status_code != 200:
-        fail("Prayer Time request failed with status %d", rep.status_code)
+        fail("Prayer Time request failed with status %d" % rep.status_code)
 
     if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
         print("Hit! Displaying cached data.")
@@ -420,12 +343,14 @@ def get_prayers(date, location, method):
     return rep.json()["data"]["timings"]
 
 # Render time icon, next prayer times data and separation line.
-def render_meta_data(icon, next_prayer):
+def render_meta_data(icon, next_prayer, colors):
+    next_prayer_time_widgets = render_next_prayer_time(next_prayer, colors)
+
     return [
         render_time_icon(icon),
-        render_line_separator(),
-        render_next_prayer_time(next_prayer)["name"],
-        render_next_prayer_time(next_prayer)["time"],
+        render_line_separator(colors),
+        next_prayer_time_widgets["name"],
+        next_prayer_time_widgets["time"],
     ]
 
 # Animate prayers frames based on x axis input.
@@ -444,11 +369,11 @@ def keyframes(x):
     ]
 
 # Pick the highlight color for the current prayer.
-def current_prayer_color(prayer_name, current_prayer):
+def current_prayer_color(prayer_name, current_prayer, colors):
     if current_prayer == prayer_name:
-        return {"box_color": "#F4C430", "font_color": "#000000"}
+        return {"box_color": colors["highlight_color"], "font_color": colors["highlight_text_color"]}
     else:
-        return {"box_color": "#000000", "font_color": "#FFFFFF"}
+        return {"box_color": "#000000", "font_color": colors["label_color"]}
 
 # Calculate the remaining time till the next prayer time.
 def time_till_next_prayer(now, nxt_pryr_time):
@@ -468,6 +393,16 @@ def current_prayer_name(next_prayer):
         "isha": "maghrib",
         "fajr": "isha",
     }[next_prayer]
+
+# List the minutes that can be added to or removed from a prayer time.
+def offset_options():
+    options = []
+    for minutes in range(-MAX_OFFSET_MINUTES, MAX_OFFSET_MINUTES + 1):
+        options.append(schema.Option(
+            display = "%s%d min" % ("+" if minutes > 0 else "", minutes),
+            value = str(minutes),
+        ))
+    return options
 
 def get_schema():
     method_options = [
@@ -537,6 +472,68 @@ def get_schema():
         ),
     ]
 
+    cycle_rate_options = [
+        schema.Option(display = "%d seconds" % seconds, value = str(seconds * 1000))
+        for seconds in range(2, 11)
+    ]
+
+    school_options = [
+        schema.Option(display = "Standard (Shafi'i, Maliki, Hanbali)", value = "0"),
+        schema.Option(display = "Hanafi", value = "1"),
+    ]
+
+    color_fields = [
+        schema.Color(
+            id = "next_prayer_color",
+            name = "Next Prayer Color",
+            desc = "Color of the next prayer's name.",
+            icon = "palette",
+            default = DEFAULT_COLORS["next_prayer_color"],
+        ),
+        schema.Color(
+            id = "countdown_color",
+            name = "Countdown Color",
+            desc = "Color of the time remaining until the next prayer.",
+            icon = "palette",
+            default = DEFAULT_COLORS["countdown_color"],
+        ),
+        schema.Color(
+            id = "separator_color",
+            name = "Separator Color",
+            desc = "Color of the line across the middle of the screen.",
+            icon = "palette",
+            default = DEFAULT_COLORS["separator_color"],
+        ),
+        schema.Color(
+            id = "label_color",
+            name = "Prayer Name Color",
+            desc = "Color of the prayer names.",
+            icon = "palette",
+            default = DEFAULT_COLORS["label_color"],
+        ),
+        schema.Color(
+            id = "time_color",
+            name = "Prayer Time Color",
+            desc = "Color of the prayer times.",
+            icon = "palette",
+            default = DEFAULT_COLORS["time_color"],
+        ),
+        schema.Color(
+            id = "highlight_color",
+            name = "Current Prayer Highlight",
+            desc = "Background color behind the current prayer's name.",
+            icon = "palette",
+            default = DEFAULT_COLORS["highlight_color"],
+        ),
+        schema.Color(
+            id = "highlight_text_color",
+            name = "Current Prayer Text Color",
+            desc = "Color of the current prayer's name.",
+            icon = "palette",
+            default = DEFAULT_COLORS["highlight_text_color"],
+        ),
+    ]
+
     return schema.Schema(
         version = "1",
         fields = [
@@ -554,5 +551,36 @@ def get_schema():
                 default = "4",
                 options = method_options,
             ),
-        ],
+            schema.Dropdown(
+                id = "school",
+                name = "Asr Calculation",
+                desc = "The school of thought used to calculate Asr. Hanafi gives a later Asr time.",
+                icon = "mosque",
+                default = DEFAULT_SCHOOL,
+                options = school_options,
+            ),
+            schema.Dropdown(
+                id = "cycle_rate",
+                name = "Cycle Rate",
+                desc = "How long each screen of prayer times is shown.",
+                icon = "gaugeHigh",
+                default = DEFAULT_CYCLE_RATE,
+                options = cycle_rate_options,
+            ),
+            schema.Toggle(
+                id = "use_12_hour",
+                name = "12 Hour Clock",
+                desc = "Show prayer times in 12 hour format instead of 24 hour format.",
+                icon = "clock",
+                default = True,
+            ),
+            schema.Dropdown(
+                id = "offset",
+                name = "Time Offset",
+                desc = "Minutes to add to or remove from all prayer times, for example to match a local mosque.",
+                icon = "sliders",
+                default = "0",
+                options = offset_options(),
+            ),
+        ] + color_fields,
     )

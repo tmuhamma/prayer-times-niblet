@@ -1,8 +1,11 @@
----
-id: prayer-times
+id: prayer-times-custom
 name: Prayer Times
 summary: Islamic Prayer Time Display
 desc: Displays the prayer times for today's date and also shows the remaining time till the next prayer based on the user's location.
-author: EslamMoh
+author: EslamMoh, modified by tmuhamma
 fileName: prayer_times.star
 packageName: prayertimes
+network_hosts:
+    - api.aladhan.com
+refresh_interval_seconds: 60
+app_id: b9fdfb3a-07eb-4bcd-a876-d3bab18214c1
