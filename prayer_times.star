@@ -625,14 +625,14 @@ def get_schema():
             schema.Toggle(
                 id = "single_page",
                 name = "Single Page",
-                desc = "Show the five daily prayers in a list on one screen, instead of cycling through screens.",
+                desc = "Show the five daily prayers in a list on one screen, instead of cycling through screens. Cycle Rate isn't used; the screen stays for the app's Time on Screen.",
                 icon = "tableCells",
                 default = False,
             ),
             schema.Dropdown(
                 id = "cycle_rate",
                 name = "Cycle Rate",
-                desc = "How long each screen of prayer times is shown.",
+                desc = "How long each screen of prayer times is shown. Not used when Single Page is on.",
                 icon = "gaugeHigh",
                 default = DEFAULT_CYCLE_RATE,
                 options = cycle_rate_options,
