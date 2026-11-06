@@ -104,10 +104,11 @@ PRAYER_NAMES = {
 # Prayers shown in the single page layout. Sunrise is left out so the five rows fit the screen.
 SINGLE_PAGE_PRAYERS = ["fajr", "duhr", "asr", "maghrib", "isha"]
 
-# How long a single page render stays valid, in seconds. It is longer than the 60 second refresh
-# so a render doesn't expire while it is on screen, which made the display move on early. The
-# list only changes at prayer times, so a render up to a minute old shows the same thing.
-SINGLE_PAGE_MAX_AGE = 120
+# How long a render stays valid, in seconds. A render can be up to a minute old when its turn
+# comes, so this leaves room for a full 60 second Time on Screen; a render that would expire while
+# on screen makes the display move on early. The app still re-renders every minute, so this only
+# matters if a refresh fails, when the countdown would be up to 3 minutes old.
+RENDER_MAX_AGE = 180
 
 # Default colors for each part of the display.
 DEFAULT_COLORS = {
@@ -173,7 +174,7 @@ def main(config):
     if config.bool("single_page", False):
         # A still image, so Niblet's Time on Screen setting decides how long it stays up.
         return render.Root(
-            max_age = SINGLE_PAGE_MAX_AGE,
+            max_age = RENDER_MAX_AGE,
             child = render_single_page(next_prayer, display),
         )
 
@@ -181,7 +182,7 @@ def main(config):
 
     return render.Root(
         delay = get_cycle_rate(config),
-        max_age = 60,
+        max_age = RENDER_MAX_AGE,
         # Slower cycle rates run past the default 15 second limit and would lose the last screens.
         show_full_animation = True,
         child = render.Column(
