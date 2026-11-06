@@ -104,9 +104,10 @@ PRAYER_NAMES = {
 # Prayers shown in the single page layout. Sunrise is left out so the five rows fit the screen.
 SINGLE_PAGE_PRAYERS = ["fajr", "duhr", "asr", "maghrib", "isha"]
 
-# How long the single page layout's one frame lasts, in milliseconds. It matches max_age, so
-# the screen is up for a full minute before the next render replaces it.
-SINGLE_PAGE_DURATION = 60000
+# How long a single page render stays valid, in seconds. It is longer than the 60 second refresh
+# so a render doesn't expire while it is on screen, which made the display move on early. The
+# list only changes at prayer times, so a render up to a minute old shows the same thing.
+SINGLE_PAGE_MAX_AGE = 120
 
 # Default colors for each part of the display.
 DEFAULT_COLORS = {
@@ -170,13 +171,9 @@ def main(config):
     }
 
     if config.bool("single_page", False):
+        # A still image, so Niblet's Time on Screen setting decides how long it stays up.
         return render.Root(
-            # A still image would otherwise last 50 ms, and the display moves on to the next app
-            # after a few seconds instead of keeping it up for the whole time it's given.
-            delay = SINGLE_PAGE_DURATION,
-            max_age = 60,
-            # Without this, the frame is cut to the default 15 second limit.
-            show_full_animation = True,
+            max_age = SINGLE_PAGE_MAX_AGE,
             child = render_single_page(next_prayer, display),
         )
 
