@@ -6,7 +6,7 @@ Author: EslamMoh
 
 Modified by tmuhamma in 2026 from the Prayer Times app in https://github.com/tidbyt/community,
 which is licensed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
-Changes: added cycle rate, 12 hour clock, Hanafi Asr, time offset and color settings, fixed
+Changes: added a single page layout, cycle rate, 12 hour clock, Hanafi Asr, time offset and color settings, fixed
 crashes at the end of the day and at the exact start of a prayer, and moved requests to HTTPS.
 """
 
@@ -101,6 +101,9 @@ PRAYER_NAMES = {
     "isha": "Isha",
 }
 
+# Prayers shown in the single page layout. Sunrise is left out so the five rows fit the screen.
+SINGLE_PAGE_PRAYERS = ["fajr", "duhr", "asr", "maghrib", "isha"]
+
 # Default colors for each part of the display.
 DEFAULT_COLORS = {
     "next_prayer_color": "#228B22",
@@ -155,13 +158,20 @@ def main(config):
     current_prayer = current_prayer_name(next_prayer["prayer"])
 
     colors = get_colors(config)
-    meta_data = render_meta_data(PRAYER_ICON[current_prayer], next_prayer, colors)
     display = {
         "prayers": prayers,
         "current_prayer": current_prayer,
         "colors": colors,
         "use_12_hour": config.bool("use_12_hour", True),
     }
+
+    if config.bool("single_page", False):
+        return render.Root(
+            max_age = 60,
+            child = render_single_page(next_prayer, display),
+        )
+
+    meta_data = render_meta_data(PRAYER_ICON[current_prayer], next_prayer, colors)
 
     return render.Root(
         delay = get_cycle_rate(config),
@@ -190,6 +200,52 @@ def main(config):
                         meta_data,
                     ),
                 ]),
+            ],
+        ),
+    )
+
+# Render the five daily prayers on one screen. The current prayer is highlighted and
+# the next prayer's name is shown in the next prayer color.
+def render_single_page(next_prayer, display):
+    return render.Padding(
+        pad = (0, 1, 0, 0),
+        child = render.Column(children = [
+            render_single_page_prayer(prayer, next_prayer["prayer"], display)
+            for prayer in SINGLE_PAGE_PRAYERS
+        ]),
+    )
+
+# Render the name and time of one prayer as a row of the single page layout.
+def render_single_page_prayer(prayer, next_prayer, display):
+    colors = current_prayer_color(prayer, display["current_prayer"], display["colors"])
+    if prayer == next_prayer:
+        colors["font_color"] = display["colors"]["next_prayer_color"]
+
+    return render.Box(
+        width = 64,
+        height = 6,
+        child = render.Row(
+            expanded = True,
+            main_align = "space_between",
+            children = [
+                render.Box(
+                    width = 4 * len(PRAYER_NAMES[prayer]) + 1,
+                    height = 6,
+                    color = colors["box_color"],
+                    child = render.Text(
+                        content = PRAYER_NAMES[prayer].upper(),
+                        font = "CG-pixel-3x5-mono",
+                        color = colors["font_color"],
+                    ),
+                ),
+                render.Padding(
+                    pad = (0, 0, 1, 0),
+                    child = render.Text(
+                        content = display_time(display["prayers"][PRAYER_NAMES[prayer]], display["use_12_hour"]),
+                        font = "CG-pixel-3x5-mono",
+                        color = display["colors"]["time_color"],
+                    ),
+                ),
             ],
         ),
     )
@@ -287,7 +343,7 @@ def render_next_prayer_time(next_prayer, colors):
                 width = 50,
                 height = 15,
                 child = render.WrappedText(
-                    content = next_prayer["time"],
+                    content = "%dhrs %dmins" % next_prayer["remaining"],
                     font = "CG-pixel-3x5-mono",
                     linespacing = 1,
                     align = "left",
@@ -313,12 +369,12 @@ def next_prayer_time(prayers, now, location, params):
 
     for prayer in PRAYER_ORDER:
         if now < pt[prayer]:
-            return {"prayer": prayer, "time": time_till_next_prayer(now, pt[prayer])}
+            return {"prayer": prayer, "remaining": time_till_next_prayer(now, pt[prayer])}
 
     # All of today's prayers have passed, so the next one is tomorrow's Fajr.
     tomorrow_fajr = get_tomorrow_fajr(now, location, params)
 
-    return {"prayer": "fajr", "time": time_till_next_prayer(now, tomorrow_fajr)}
+    return {"prayer": "fajr", "remaining": time_till_next_prayer(now, tomorrow_fajr)}
 
 # Get Fajr prayer time for tomorrow date.
 def get_tomorrow_fajr(now, location, params):
@@ -375,13 +431,13 @@ def current_prayer_color(prayer_name, current_prayer, colors):
     else:
         return {"box_color": "#000000", "font_color": colors["label_color"]}
 
-# Calculate the remaining time till the next prayer time.
+# Calculate the hours and minutes remaining till the next prayer time.
 def time_till_next_prayer(now, nxt_pryr_time):
     remaining_time = nxt_pryr_time - now
     hours = int(remaining_time.hours)
     mins = int(remaining_time.minutes) % 60
 
-    return "%shrs %smins" % (hours, mins)
+    return (hours, mins)
 
 # Get the current prayer time based on the next prayer time name.
 def current_prayer_name(next_prayer):
@@ -558,6 +614,13 @@ def get_schema():
                 icon = "mosque",
                 default = DEFAULT_SCHOOL,
                 options = school_options,
+            ),
+            schema.Toggle(
+                id = "single_page",
+                name = "Single Page",
+                desc = "Show the five daily prayers in a list on one screen, instead of cycling through screens.",
+                icon = "tableCells",
+                default = False,
             ),
             schema.Dropdown(
                 id = "cycle_rate",

@@ -19,7 +19,8 @@ The Tidbyt app lets you set the location that prayer times will calculated based
 You can also set:
 
 - **Asr Calculation:** Standard (Shafi'i, Maliki, Hanbali) or Hanafi.
-- **Cycle Rate:** how long each screen of prayer times is shown, from 2 to 10 seconds.
+- **Single Page:** list the five daily prayers on one screen instead of cycling through three screens. The current prayer is highlighted and the next prayer's name is shown in the next prayer color. Sunrise and the countdown are left out so everything fits.
+- **Cycle Rate:** how long each screen of prayer times is shown, from 2 to 10 seconds. Not used by the single page layout.
 - **12 Hour Clock:** show prayer times in 12 hour format, which is the default, or turn it off for 24 hour format.
 - **Time Offset:** add or remove up to 30 minutes from all prayer times, for example to match a local mosque.
 - **Colors:** choose the color of each part of the display.
